@@ -38,6 +38,10 @@
     -webkit-font-smoothing: antialiased;
     background: radial-gradient(ellipse 70% 55% at 50% 38%, #101010 0%, #000 70%);
   }
+
+  /* fireflies + shooting stars canvas */
+  #sky { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  header, main, footer { position: relative; z-index: 1; }
   .caps { text-transform: uppercase; letter-spacing: .14em; font-weight: 600; }
 
   /* top bar */
@@ -98,6 +102,7 @@
 </style>
 </head>
 <body>
+  <canvas id="sky" aria-hidden="true"></canvas>
   <header>
     <a class="brand caps" href="/">Grafia Labs</a>
     <nav class="caps" aria-label="Primary">
@@ -131,5 +136,109 @@
       Nothing on this site is financial advice. Memecoins are highly speculative and can lose all of their value. We will never DM you first or ask for your seed phrase.
     </div>
   </footer>
+
+  <script>
+  (function () {
+    var canvas = document.getElementById('sky');
+    var ctx = canvas.getContext('2d');
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var W, H, dpr, flies = [], shots = [], nextShot = 0, last = 0, resizeTimer;
+
+    // pre-rendered soft glow, reused for every firefly
+    var glow = document.createElement('canvas'); glow.width = glow.height = 64;
+    var g = glow.getContext('2d');
+    var grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,248,225,1)');
+    grad.addColorStop(0.18, 'rgba(255,244,214,.55)');
+    grad.addColorStop(1, 'rgba(255,244,214,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+
+    function makeFly() {
+      return {
+        x: Math.random() * W, y: Math.random() * H,
+        size: Math.random() * 9 + 7,            // glow diameter in px
+        angle: Math.random() * Math.PI * 2,
+        speed: Math.random() * 14 + 6,          // px per second
+        phase: Math.random() * Math.PI * 2,
+        rate: Math.random() * 0.9 + 0.4         // blink speed
+      };
+    }
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth; H = window.innerHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var n = Math.round(Math.min(90, Math.max(26, (W * H) / 20000)));
+      flies = []; for (var i = 0; i < n; i++) flies.push(makeFly());
+      if (reduce) drawStatic();
+    }
+
+    function spawnShot() {
+      var theta = (Math.random() * 14 + 52) * Math.PI / 180;   // fall down and to the left
+      var speed = Math.random() * 450 + 450;
+      shots.push({
+        x: Math.random() * W * 1.1 + W * 0.1, y: -20 - Math.random() * 60,
+        vx: -Math.cos(theta) * speed, vy: Math.sin(theta) * speed,
+        len: Math.random() * 110 + 100, life: 0, max: Math.random() * 0.7 + 0.9
+      });
+    }
+
+    function drawFlies(t) {
+      for (var i = 0; i < flies.length; i++) {
+        var f = flies[i];
+        var a = 0.12 + 0.88 * (0.5 + 0.5 * Math.sin(t * 0.001 * f.rate + f.phase));
+        ctx.globalAlpha = a * a;                 // sharper blink
+        ctx.drawImage(glow, f.x - f.size, f.y - f.size, f.size * 2, f.size * 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawStatic() {
+      ctx.clearRect(0, 0, W, H);
+      for (var i = 0; i < flies.length; i++) {
+        var f = flies[i];
+        ctx.globalAlpha = 0.25 + (i % 5) * 0.12;
+        ctx.drawImage(glow, f.x - f.size, f.y - f.size, f.size * 2, f.size * 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function frame(t) {
+      var dt = Math.min((t - last) / 1000 || 0.016, 0.05); last = t;
+      ctx.clearRect(0, 0, W, H);
+
+      for (var i = 0; i < flies.length; i++) {          // drift
+        var f = flies[i];
+        f.angle += (Math.random() - 0.5) * 2.2 * dt;
+        f.x += Math.cos(f.angle) * f.speed * dt;
+        f.y += Math.sin(f.angle) * f.speed * dt;
+        if (f.x < -20) f.x = W + 20; else if (f.x > W + 20) f.x = -20;
+        if (f.y < -20) f.y = H + 20; else if (f.y > H + 20) f.y = -20;
+      }
+      drawFlies(t);
+
+      if (t > nextShot) { spawnShot(); if (Math.random() < 0.3) spawnShot(); nextShot = t + 1400 + Math.random() * 2600; }
+      for (var j = shots.length - 1; j >= 0; j--) {     // shooting stars
+        var s = shots[j];
+        s.life += dt; s.x += s.vx * dt; s.y += s.vy * dt;
+        var sp = Math.hypot(s.vx, s.vy), tx = s.x - (s.vx / sp) * s.len, ty = s.y - (s.vy / sp) * s.len;
+        var fade = Math.max(0, 1 - s.life / s.max);
+        var lg = ctx.createLinearGradient(s.x, s.y, tx, ty);
+        lg.addColorStop(0, 'rgba(255,255,255,' + (0.95 * fade) + ')');
+        lg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.strokeStyle = lg; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tx, ty); ctx.stroke();
+        ctx.globalAlpha = fade; ctx.drawImage(glow, s.x - 7, s.y - 7, 14, 14); ctx.globalAlpha = 1;
+        if (s.life > s.max || s.y > H + 40 || s.x < -40) shots.splice(j, 1);
+      }
+      requestAnimationFrame(frame);
+    }
+
+    window.addEventListener('resize', function () { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 150); });
+    resize();
+    if (!reduce) requestAnimationFrame(frame);
+  })();
+  </script>
 </body>
 </html>
